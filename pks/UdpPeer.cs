@@ -1,14 +1,13 @@
-﻿using System;
+﻿using System.Net.Sockets;
 using System.Net;
-using System.Net.Sockets;
 using System.Text;
-using System.Threading.Tasks;
 
 public class UdpPeer
 {
     private UdpClient udpClient;
     private IPEndPoint remoteEndPoint;
     private int listenPort;
+    private bool isConnected = false;
 
     public UdpPeer(int listenPort, string remoteAddress, int remotePort)
     {
@@ -23,8 +22,38 @@ public class UdpPeer
         {
             var result = await udpClient.ReceiveAsync();
             string receivedMessage = Encoding.UTF8.GetString(result.Buffer);
-            onMessageReceived?.Invoke(receivedMessage);
+            if (!isConnected)
+            {
+                if (receivedMessage == "HELLO")
+                {
+                    Console.WriteLine("Prijatý handshake od remote uzla.");
+                    await SendMessageAsync("HELLO_ACK");
+                    isConnected = true;
+                }
+                else if (receivedMessage == "HELLO_ACK")
+                {
+                    Console.WriteLine("Handshake úspešný.");
+                    isConnected = true;
+                }
+            }
+            else
+            {
+                onMessageReceived?.Invoke(receivedMessage);
+            }
         }
+    }
+
+    public bool IsConnected
+    {
+        get { return isConnected; }
+    }
+
+
+    public async Task SendHandshakeAsync()
+    {
+        // Pridané oneskorenie, aby druhý uzol mal čas na počúvanie
+        await Task.Delay(5000); // Pridajte malý delay (500ms) pred odoslaním handshaku
+        await SendMessageAsync("HELLO");
     }
 
     public async Task SendMessageAsync(string message)
@@ -33,5 +62,3 @@ public class UdpPeer
         await udpClient.SendAsync(messageBytes, messageBytes.Length, remoteEndPoint);
     }
 }
-
-
