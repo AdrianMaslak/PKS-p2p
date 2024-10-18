@@ -1,4 +1,5 @@
-﻿using System;
+﻿
+using System;
 using System.Threading.Tasks;
 
 class Program
@@ -21,10 +22,6 @@ class Program
             Console.WriteLine($"Prijaté: {message}");
         });
 
-        // Odoslanie handshake
-        await localPeer.SendHandshakeAsync();
-        Console.WriteLine("Handshake odoslaný.");
-
         Console.WriteLine("Zadajte správy na odoslanie. Zadajte 'exit' pre ukončenie.");
         while (true)
         {
@@ -32,14 +29,7 @@ class Program
             if (messageToSend.ToLower() == "exit")
                 break;
 
-            if (localPeer.IsConnected)
-            {
-                await localPeer.SendMessageAsync(messageToSend);
-            }
-            else
-            {
-                Console.WriteLine("Nie ste pripojení. Čakajte na handshake.");
-            }
+            await localPeer.SendMessageAsync(messageToSend);
         }
     }
 }

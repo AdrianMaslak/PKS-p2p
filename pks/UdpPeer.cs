@@ -1,6 +1,8 @@
-﻿using System.Net.Sockets;
+﻿using System;
 using System.Net;
+using System.Net.Sockets;
 using System.Text;
+using System.Threading.Tasks;
 
 public class UdpPeer
 {
@@ -24,36 +26,41 @@ public class UdpPeer
             string receivedMessage = Encoding.UTF8.GetString(result.Buffer);
             if (!isConnected)
             {
-                if (receivedMessage == "HELLO")
+                if (receivedMessage == "SYN")
                 {
-                    Console.WriteLine("Prijatý handshake od remote uzla.");
-                    await SendMessageAsync("HELLO_ACK");
+                    Console.WriteLine("Prijate SYN, odosielam SYN_ACK");
+                    SendMessageAsync("SYN_ACK");
+                }
+                else if (receivedMessage == "SYN_ACK")
+                {
+                    Console.WriteLine("prijate SYN_ACK, odosielam ACK");
+                    await SendMessageAsync("ACK");
+                }
+                else if ( receivedMessage == "ACK")
+                {
+                     Console.WriteLine("Handshake uspesny");
                     isConnected = true;
                 }
-                else if (receivedMessage == "HELLO_ACK")
-                {
-                    Console.WriteLine("Handshake úspešný.");
-                    isConnected = true;
-                }
+
             }
-            else
-            {
-                onMessageReceived?.Invoke(receivedMessage);
-            }
+            onMessageReceived?.Invoke(receivedMessage);
+
         }
     }
 
-    public bool IsConnected
+    public bool IsConnected()
     {
-        get { return isConnected; }
+        return isConnected;
     }
 
-
-    public async Task SendHandshakeAsync()
+    public async Task SendHandshake()
     {
-        // Pridané oneskorenie, aby druhý uzol mal čas na počúvanie
-        await Task.Delay(5000); // Pridajte malý delay (500ms) pred odoslaním handshaku
-        await SendMessageAsync("HELLO");
+
+            await SendMessageAsync("SYN");
+            await Task.Delay(5000);
+
+
+
     }
 
     public async Task SendMessageAsync(string message)
