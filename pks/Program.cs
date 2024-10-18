@@ -1,35 +1,58 @@
-﻿
-using System;
+﻿using System;
 using System.Threading.Tasks;
 
 class Program
 {
     static async Task Main(string[] args)
     {
-        // Konfigurácia portov a IP adresy
-        Console.Write("Zadajte svoj listen port: ");
-        int localPort = int.Parse(Console.ReadLine());
+        // Získanie portov a IP adresy od používateľa
+        Console.Write("Zadajte svoj receiving port (počúvanie): ");
+        int receivePort = int.Parse(Console.ReadLine());
 
-        Console.Write("Zadajte remote IP adresu: ");
+        Console.Write("Zadajte remote IP adresu (odosielanie na tento uzol): ");
         string remoteAddress = Console.ReadLine();
 
-        Console.Write("Zadajte remote port: ");
-        int remotePort = int.Parse(Console.ReadLine());
+        Console.Write("Zadajte remote sending port (port, na ktorý budeme posielať správy): ");
+        int sendPort = int.Parse(Console.ReadLine());
 
-        UdpPeer localPeer = new UdpPeer(localPort, remoteAddress, remotePort);
-        _ = localPeer.StartListeningAsync(message =>
+        UdpPeer localPeer = new UdpPeer(receivePort, remoteAddress, sendPort);
+
+        // Vlákno pre počúvanie (každý uzol počúva na svojom porte)
+        Task receivingTask = Task.Run(async () =>
         {
-            Console.WriteLine($"Prijaté: {message}");
+            await localPeer.StartReceivingAsync(message =>
+            {
+                Console.WriteLine($"Prijaté: {message}");
+            });
         });
 
-        Console.WriteLine("Zadajte správy na odoslanie. Zadajte 'exit' pre ukončenie.");
-        while (true)
+        // Vlákno pre odosielanie (každý uzol posiela správy na port vzdialeného uzla)
+        Task sendingTask = Task.Run(async () =>
         {
-            string messageToSend = Console.ReadLine();
-            if (messageToSend.ToLower() == "exit")
-                break;
+            // Odosielanie handshake
+            await localPeer.SendHandshakeAsync();
+            Console.WriteLine("Handshake odoslaný");
 
-            await localPeer.SendMessageAsync(messageToSend);
-        }
+            // Odosielanie správ po handshaku
+            Console.WriteLine("Zadajte správy na odoslanie. Zadajte 'exit' pre ukončenie.");
+            while (true)
+            {
+                string messageToSend = Console.ReadLine();
+                if (messageToSend.ToLower() == "exit")
+                    break;
+
+                if (localPeer.IsConnected())
+                {
+                    await localPeer.SendMessageAsync(messageToSend);
+                }
+                else
+                {
+                    Console.WriteLine("Nie ste pripojení. Čakajte na handshake.");
+                }
+            }
+        });
+
+        // Čakanie na ukončenie úloh, receivingTask pokračuje neustále
+        await Task.WhenAny(receivingTask, sendingTask);
     }
 }

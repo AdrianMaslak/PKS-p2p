@@ -39,7 +39,6 @@ public class Header
     public static Header FromBytes(byte[] headerBytes)
     {
         Header header = new Header();
-        header.Type = headerBytes[0];
         header.SourcePort = BitConverter.ToUInt16(headerBytes, 1);
         header.DestinationPort = BitConverter.ToUInt16(headerBytes, 3);
         header.Length = BitConverter.ToUInt16(headerBytes, 5);
