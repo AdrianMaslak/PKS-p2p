@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection.PortableExecutable;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -29,23 +30,26 @@ public class UdpPeer
             // Prijatá správa
             var result = await receivingClient.ReceiveAsync();
             string receivedMessage = Encoding.UTF8.GetString(result.Buffer);
+            byte[] receivedBytes = result.Buffer;
+
+
+            Header header = Header.FromBytes(receivedBytes);
 
             if (!isConnected)
             {
                 // Spracovanie handshake
-                if (receivedMessage == "SYN")
+                if (header.Data == "SYN")
                 {
                     Console.WriteLine("Prijaté SYN, odosielam SYN_ACK");
-                    await SendMessageAsync("SYN_ACK");
+                    await SendMessageWithHeaderAsync("SYN_ACK", 0x02, header.DestinationPort, header.SourcePort);
                 }
-                else if (receivedMessage == "SYN_ACK")
+                else if (header.Data == "SYN_ACK")
                 {
                     Console.WriteLine("Prijaté SYN_ACK, odosielam ACK");
-                    await SendMessageAsync("ACK");
-                    isConnected = true;
+                    await SendMessageWithHeaderAsync("ACK", 0x03, header.DestinationPort, header.SourcePort); isConnected = true;
                     handshakeComplete = true;
                 }
-                else if (receivedMessage == "ACK")
+                else if (header.Data == "ACK")
                 {
                     Console.WriteLine("Handshake úspešný");
                     isConnected = true;
@@ -93,9 +97,9 @@ public class UdpPeer
         while (!handshakeComplete)
         {
             Console.WriteLine("Odosielam SYN na nadviazanie spojenia...");
-            await SendMessageAsync("SYN");
-
-            // Čakáme 2 sekundy pred ďalším pokusom
+            await SendMessageWithHeaderAsync("SYN", 0x01,
+                (ushort)((IPEndPoint)receivingClient.Client.LocalEndPoint).Port,
+                (ushort)((IPEndPoint)remoteEndPoint).Port);            // Čakáme 2 sekundy pred ďalším pokusom
             await Task.Delay(2000);
 
             if (handshakeComplete)
