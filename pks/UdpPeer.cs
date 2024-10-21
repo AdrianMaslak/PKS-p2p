@@ -12,6 +12,8 @@ public class UdpPeer
     private IPEndPoint remoteEndPoint; // Kde posielame správy (adresát)
     private bool isConnected = false;  // Stav pripojenia
     private bool handshakeComplete = false; // Stav handshaku
+    private uint localSequenceNumber; // Sekvenčné číslo pre lokálny uzol
+    private uint remoteSequenceNumber; // Sekvenčné číslo pre remote uzol
 
     public UdpPeer(int receivePort, string remoteAddress, int remotePort)
     {
@@ -20,6 +22,9 @@ public class UdpPeer
         // Inicializácia UDP klienta na odosielanie správ (bez špecifického portu)
         sendingClient = new UdpClient();
         remoteEndPoint = new IPEndPoint(IPAddress.Parse(remoteAddress), remotePort);
+
+        Random random = new Random();
+        localSequenceNumber = (uint)random.Next(1, 1000);
     }
 
     // Vlákno na počúvanie prichádzajúcich správ
