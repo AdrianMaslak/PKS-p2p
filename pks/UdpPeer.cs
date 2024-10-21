@@ -12,8 +12,11 @@ public class UdpPeer
     private IPEndPoint remoteEndPoint; // Kde posielame správy (adresát)
     private bool isConnected = false;  // Stav pripojenia
     private bool handshakeComplete = false; // Stav handshaku
-    private uint localSequenceNumber; // Sekvenčné číslo pre lokálny uzol
-    private uint remoteSequenceNumber; // Sekvenčné číslo pre remote uzol
+    private uint localSequenceNumber;
+    private uint remoteSequenceNumber;
+
+    public uint LocalSequenceNumber { get { return localSequenceNumber; } }
+    public uint RemoteSequenceNumber { get { return remoteSequenceNumber; } }
 
     public UdpPeer(int receivePort, string remoteAddress, int remotePort)
     {
@@ -23,8 +26,7 @@ public class UdpPeer
         sendingClient = new UdpClient();
         remoteEndPoint = new IPEndPoint(IPAddress.Parse(remoteAddress), remotePort);
 
-        Random random = new Random();
-        localSequenceNumber = (uint)random.Next(1, 1000);
+        localSequenceNumber = (uint)100;
     }
 
     // Vlákno na počúvanie prichádzajúcich správ
@@ -35,37 +37,44 @@ public class UdpPeer
             // Prijatá správa
             var result = await receivingClient.ReceiveAsync();
             string receivedMessage = Encoding.UTF8.GetString(result.Buffer);
+
             byte[] receivedBytes = result.Buffer;
 
 
             Header header = Header.FromBytes(receivedBytes);
+            Console.WriteLine($"Prijatá správa: Flags = {header.Flags}, Seq = {header.SequenceNumber}, Ack = {header.AcknowledgmentNumber}");
 
             if (!isConnected)
             {
                 // Spracovanie handshake
-                if (header.Data == "SYN")
+                if ((header.Flags & 0x01) != 0 && header.Data == null)
                 {
                     Console.WriteLine("Prijaté SYN, odosielam SYN_ACK");
-                    await SendMessageWithHeaderAsync("SYN_ACK", 0x02, header.DestinationPort, header.SourcePort);
+                    remoteSequenceNumber = header.SequenceNumber;
+                    await SendMessageWithHeaderAsync(null, 0x02, header.DestinationPort, header.SourcePort, localSequenceNumber, remoteSequenceNumber + 1);
                 }
-                else if (header.Data == "SYN_ACK")
+                // Po prijatí SYN-ACK
+                else if ((header.Flags & 0x02) != 0 && header.Data == null)
                 {
                     Console.WriteLine("Prijaté SYN_ACK, odosielam ACK");
-                    await SendMessageWithHeaderAsync("ACK", 0x03, header.DestinationPort, header.SourcePort); isConnected = true;
+                    remoteSequenceNumber = header.SequenceNumber;
+                    await SendMessageWithHeaderAsync(null, 0x04, header.DestinationPort, header.SourcePort, localSequenceNumber + 1, remoteSequenceNumber + 1);
                     handshakeComplete = true;
+                    isConnected = true;  // Ukončenie handshake
                 }
-                else if (header.Data == "ACK")
+                // Po prijatí ACK (musíme overiť, či je ACK správne a ukončiť handshake)
+                else if ((header.Flags & 0x04) != 0 && header.Data == null)
                 {
-                    Console.WriteLine("Handshake úspešný");
+                    Console.WriteLine("Prijaté ACK, handshake úspešný");
                     isConnected = true;
                     handshakeComplete = true;
                 }
             }
 
             // Spracovanie bežných správ po úspešnom handshaku
-            if (isConnected)
+            if (isConnected && header.Data != null)
             {
-                onMessageReceived?.Invoke(receivedMessage);
+                onMessageReceived?.Invoke(header.Data);
             }
         }
     }
@@ -76,14 +85,17 @@ public class UdpPeer
         byte[] messageBytes = Encoding.UTF8.GetBytes(message);
         await sendingClient.SendAsync(messageBytes, messageBytes.Length, remoteEndPoint);
     }
-    public async Task SendMessageWithHeaderAsync(string message, byte messageType, ushort sourcePort, ushort destinationPort)
+    public async Task SendMessageWithHeaderAsync(string? message, byte messageType, ushort sourcePort, ushort destinationPort, uint seqNumber, uint ackNumber)
     {
         // Vytvorenie hlavičky
         Header header = new Header
         {
-            Type = messageType, // Typ správy (napr. 0x01 pre SYN)
+            Flags = messageType,
             SourcePort = sourcePort,
             DestinationPort = destinationPort,
+            SequenceNumber = (ushort)seqNumber,
+            AcknowledgmentNumber = (ushort)ackNumber,
+
             Data = message
         };
 
@@ -102,10 +114,11 @@ public class UdpPeer
         while (!handshakeComplete)
         {
             Console.WriteLine("Odosielam SYN na nadviazanie spojenia...");
-            await SendMessageWithHeaderAsync("SYN", 0x01,
-                (ushort)((IPEndPoint)receivingClient.Client.LocalEndPoint).Port,
-                (ushort)((IPEndPoint)remoteEndPoint).Port);            // Čakáme 2 sekundy pred ďalším pokusom
+
+            await SendMessageWithHeaderAsync(null, 0x01, (ushort)((IPEndPoint)receivingClient.Client.LocalEndPoint).Port, (ushort)((IPEndPoint)remoteEndPoint).Port, localSequenceNumber, 0);
+            // Čakáme 2 sekundy pred ďalším pokusom
             await Task.Delay(2000);
+            Console.WriteLine($"Sequence Number: {localSequenceNumber}, Acknowledgment Number: {remoteSequenceNumber}");
 
             if (handshakeComplete)
             {

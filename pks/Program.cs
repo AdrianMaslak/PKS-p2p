@@ -43,8 +43,7 @@ class Program
 
                 if (localPeer.IsConnected())
                 {
-                    await localPeer.SendMessageWithHeaderAsync(messageToSend, 0x06, (ushort)receivePort, (ushort)(sendPort));
-                    //await localPeer.SendMessageAsync(messageToSend);
+                    await localPeer.SendMessageWithHeaderAsync(messageToSend, 0x05, (ushort)receivePort, (ushort)(sendPort), localPeer.LocalSequenceNumber + 1, localPeer.RemoteSequenceNumber + 1);                    //await localPeer.SendMessageAsync(messageToSend);
                 }
                 else
                 {
