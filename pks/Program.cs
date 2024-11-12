@@ -1,4 +1,6 @@
-﻿using System;
+﻿// Program.cs
+using System;
+using System.IO;
 using System.Threading.Tasks;
 
 class Program
@@ -15,14 +17,61 @@ class Program
         Console.Write("Zadajte remote sending port (port, na ktorý budeme posielať správy): ");
         int sendPort = int.Parse(Console.ReadLine());
 
-        UdpPeer localPeer = new UdpPeer(receivePort, remoteAddress, sendPort);
+        // Získanie maximálnej veľkosti fragmentu od používateľa
+        const int MAX_FRAGMENT_SIZE_LIMIT = 1400; // MTU pre Ethernet je 1500 bajtov
+
+        Console.Write($"Zadajte maximálnu veľkosť fragmentu (max {MAX_FRAGMENT_SIZE_LIMIT} bajtov): ");
+        int maxFragmentSize;
+        while (true)
+        {
+            if (int.TryParse(Console.ReadLine(), out maxFragmentSize))
+            {
+                if (maxFragmentSize > MAX_FRAGMENT_SIZE_LIMIT)
+                {
+                    Console.WriteLine($"Veľkosť fragmentu nemôže byť väčšia ako {MAX_FRAGMENT_SIZE_LIMIT} bajtov. Skúste znova:");
+                }
+                else if (maxFragmentSize < 20) // Minimálna veľkosť fragmentu (príklad)
+                {
+                    Console.WriteLine("Veľkosť fragmentu musí byť aspoň 20 bajtov. Skúste znova:");
+                }
+                else
+                {
+                    break;
+                }
+            }
+            else
+            {
+                Console.WriteLine("Neplatný vstup. Zadajte celé číslo:");
+            }
+        }
+
+        UdpPeer localPeer = new UdpPeer(receivePort, remoteAddress, sendPort, maxFragmentSize);
 
         // Vlákno pre počúvanie (každý uzol počúva na svojom porte)
         Task receivingTask = Task.Run(async () =>
         {
             await localPeer.StartReceivingAsync(message =>
             {
-                Console.WriteLine($"Prijaté: {message}");
+                if (message.StartsWith("<FILENAME>"))
+                {
+                    // Extrahujeme názov súboru a obsah
+                    int endIndex = message.IndexOf("<END>");
+                    string fileName = message.Substring(10, endIndex - 10);
+                    string fileContent = message.Substring(endIndex + 5);
+
+                    // Prevod z Base64
+                    byte[] fileBytes = Convert.FromBase64String(fileContent);
+
+                    // Uložíme súbor
+                    string filePath = Path.Combine(Environment.CurrentDirectory, fileName);
+                    File.WriteAllBytes(filePath, fileBytes);
+
+                    Console.WriteLine($"Súbor '{fileName}' bol prijatý a uložený na: {filePath}");
+                }
+                else
+                {
+                    Console.WriteLine($"Prijatá správa: {message}");
+                }
             });
         });
 
@@ -34,20 +83,80 @@ class Program
             Console.WriteLine("Handshake odoslaný");
 
             // Odosielanie správ po handshaku
-            Console.WriteLine("Zadajte správy na odoslanie. Zadajte 'exit' pre ukončenie.");
             while (true)
             {
-                string messageToSend = Console.ReadLine();
-                if (messageToSend.ToLower() == "exit")
+                Console.WriteLine("\nVyberte možnosť:");
+                Console.WriteLine("1. Odoslať textovú správu");
+                Console.WriteLine("2. Odoslať súbor");
+                Console.WriteLine("Napíšte 'exit' pre ukončenie.");
+                Console.Write("Vaša voľba: ");
+                string choice = Console.ReadLine();
+
+                if (choice.ToLower() == "exit")
                     break;
 
-                if (localPeer.IsConnected())
+                if (choice == "1")
                 {
-                    await localPeer.SendMessageWithHeaderAsync(messageToSend, 0x05, localPeer.LocalSequenceNumber + 1, localPeer.RemoteSequenceNumber + 1);
+                    Console.Write("Zadajte správu: ");
+                    string messageToSend = Console.ReadLine();
+                    if (string.IsNullOrEmpty(messageToSend))
+                    {
+                        Console.WriteLine("Správa nemôže byť prázdna.");
+                        continue;
+                    }
+
+                    if (localPeer.IsConnected())
+                    {
+                        await localPeer.SendMessageAsync(messageToSend);
+                    }
+                    else
+                    {
+                        Console.WriteLine("Nie ste pripojení. Čakajte na handshake.");
+                    }
+                }
+                else if (choice == "2")
+                {
+                    Console.Write("Zadajte cestu k súboru: ");
+                    string filePath = Console.ReadLine();
+                    if (string.IsNullOrEmpty(filePath))
+                    {
+                        Console.WriteLine("Cesta k súboru nemôže byť prázdna.");
+                        continue;
+                    }
+
+                    if (File.Exists(filePath))
+                    {
+                        try
+                        {
+                            byte[] fileBytes = File.ReadAllBytes(filePath);
+                            string fileContent = Convert.ToBase64String(fileBytes); // Prevod na Base64
+                            string fileName = Path.GetFileName(filePath);
+
+                            // Pridáme názov súboru na začiatok dát s markerom
+                            string messageToSend = $"<FILENAME>{fileName}<END>{fileContent}";
+
+                            if (localPeer.IsConnected())
+                            {
+                                await localPeer.SendMessageAsync(messageToSend, fileName); // Odovzdáme fileName
+                            }
+                            else
+                            {
+                                Console.WriteLine("Nie ste pripojení. Čakajte na handshake.");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Chyba pri čítaní súboru: {ex.Message}");
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine("Súbor nenájdený.");
+                    }
                 }
                 else
                 {
-                    Console.WriteLine("Nie ste pripojení. Čakajte na handshake.");
+                    Console.WriteLine("Neplatná voľba.");
                 }
             }
         });
