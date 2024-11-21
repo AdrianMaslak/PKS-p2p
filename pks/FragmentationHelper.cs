@@ -32,7 +32,6 @@ public static class FragmentationHelper
                 Data = Encoding.UTF8.GetString(fragmentData)
             };
 
-            fragments.Add(header);
         }
 
         return fragments;

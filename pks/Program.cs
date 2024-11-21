@@ -85,11 +85,12 @@ class Program
             // Odosielanie správ po handshaku
             while (true)
             {
-                Console.WriteLine("\nVyberte možnosť:");
-                Console.WriteLine("1. Odoslať textovú správu");
-                Console.WriteLine("2. Odoslať súbor");
-                Console.WriteLine("Napíšte 'exit' pre ukončenie.");
-                Console.Write("Vaša voľba: ");
+                Console.WriteLine("\nVyberte moznost:");
+                Console.WriteLine("1. Odoslat textovu spravu");
+                Console.WriteLine("2. Odoslat subor");
+                Console.WriteLine("3. Zmenit velkost fragmentu");
+                Console.WriteLine("Napiste 'exit' pre ukoncenie.");
+                Console.Write("Vasa voľba: ");
                 string choice = Console.ReadLine();
 
                 if (choice.ToLower() == "exit")
@@ -154,6 +155,33 @@ class Program
                         Console.WriteLine("Súbor nenájdený.");
                     }
                 }
+                else if (choice == "3")
+                {
+                    Console.Write($"Zadaj novu velkost fragmentu (medzi 20 a {MAX_FRAGMENT_SIZE_LIMIT} bajtov): ");
+                    try
+                    {
+                        int newSize = int.Parse(Console.ReadLine());
+
+                        if (newSize < 20 || newSize > MAX_FRAGMENT_SIZE_LIMIT)
+                        {
+                            Console.WriteLine($"Chyba: Velkost musi byt medzi 20 a {MAX_FRAGMENT_SIZE_LIMIT} bajtov.");
+                        }
+                        else
+                        {
+                            localPeer.SetMaxFragmentSize(newSize);
+                            Console.WriteLine($"Velkost fragmentu nastavena na {newSize} bajtov.");
+                        }
+                    }
+                    catch (FormatException)
+                    {
+                        Console.WriteLine("Chyba: Neplatny format vstupu. Zadaj ciselnu hodnotu.");
+                    }
+                    catch (OverflowException)
+                    {
+                        Console.WriteLine("Chyba: Zadana hodnota je prilis velka alebo prilis mala.");
+                    }
+                }
+
                 else
                 {
                     Console.WriteLine("Neplatná voľba.");

@@ -241,6 +241,15 @@ public class UdpPeer
             }
         }
     }
+    public void SetMaxFragmentSize(int newSize)
+    {
+        if (newSize < 20 || newSize > 1400)
+        {
+            throw new ArgumentOutOfRangeException("Fragment size must be between 20 and 1400 bytes.");
+        }
+        maxFragmentSize = newSize;
+    }
+
 
     public bool IsConnected()
     {
