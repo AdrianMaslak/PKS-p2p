@@ -17,6 +17,13 @@ public class UdpPeer
     private uint localSequenceNumber;
     private uint remoteSequenceNumber;
 
+    private DateTime lastHeartbeatSent;
+    private DateTime lastHeartbeatReceived;
+    private int missedHeartbeats = 0;
+
+    private const int HEARTBEAT_INTERVAL_MS = 5000; // 5 sekúnd
+    private const int MAX_MISSED_HEARTBEATS = 3;
+
     private int maxFragmentSize;
 
     private Dictionary<ushort, List<Header>> receivedMessages = new Dictionary<ushort, List<Header>>();
@@ -24,6 +31,8 @@ public class UdpPeer
 
     public uint LocalSequenceNumber { get { return localSequenceNumber; } }
     public uint RemoteSequenceNumber { get { return remoteSequenceNumber; } }
+
+    public event Action ConnectionLost;
 
     public UdpPeer(int receivePort, string remoteAddress, int remotePort, int maxFragmentSize)
     {
@@ -49,8 +58,21 @@ public class UdpPeer
             try
             {
                 Header header = Header.FromBytes(receivedBytes);
-                Console.WriteLine($"Prijatý fragment: Flags={header.Flags}, Seq={header.SequenceNumber}, Ack={header.AcknowledgmentNumber}, FragOffset={header.FragmentOffset}/{header.TotalFragments}");
-
+               if (header.Flags == 0x07) // Heartbeat
+                {
+                    await SendAckAsync(); // Send ACK in response
+                    lastHeartbeatReceived = DateTime.Now;
+                    missedHeartbeats = 0; // Reset missed heartbeats
+                    continue;
+                }
+                if (header.Flags == 0x08) // ACK
+                {
+                    // Removed unnecessary console output
+                    // Console.WriteLine("Prijaté ACK");
+                    lastHeartbeatReceived = DateTime.Now;
+                    missedHeartbeats = 0; // Reset missed heartbeats
+                    continue;
+                }
                 // Spracovanie dátových fragmentov
                 if (header.Flags == 0x05) // Data message
                 {
@@ -64,7 +86,8 @@ public class UdpPeer
                     // Uložíme fragment
                     receivedMessages[header.SequenceNumber][header.FragmentOffset - 1] = header;
 
-                    Console.WriteLine($"Fragment {header.FragmentOffset}/{header.TotalFragments} prijatý bez chýb.");
+                    // Removed unnecessary console output
+                    // Console.WriteLine($"Fragment {header.FragmentOffset}/{header.TotalFragments} prijatý bez chýb.");
 
                     // Skontrolujeme, či sme prijali všetky fragmenty
                     if (receivedMessages[header.SequenceNumber].All(h => h != null))
@@ -74,7 +97,8 @@ public class UdpPeer
                             .OrderBy(h => h.FragmentOffset)
                             .Select(h => h.Data));
 
-                        Console.WriteLine("Všetky fragmenty úspešne prijaté.");
+                        // Removed unnecessary console output
+                        // Console.WriteLine("Všetky fragmenty úspešne prijaté.");
 
                         DateTime startTime = messageStartTimes[header.SequenceNumber];
                         TimeSpan duration = DateTime.Now - startTime;
@@ -85,14 +109,15 @@ public class UdpPeer
                         // Zavoláme handler pre prijatú správu
                         onMessageReceived?.Invoke(messageData);
 
-                        Console.WriteLine($"Celková veľkosť: {totalMessageSize} bajtov");
-                        Console.WriteLine($"Trvanie prenosu: {duration.TotalSeconds} sekúnd");
+                        // Removed unnecessary console output
+                        // Console.WriteLine($"Celková veľkosť: {totalMessageSize} bajtov");
+                        // Console.WriteLine($"Trvanie prenosu: {duration.TotalSeconds} sekúnd");
                     }
                 }
                 else
                 {
                     // Spracovanie iných typov správ (napr. handshake)
-                    ProcessControlMessage(header);
+                    await ProcessControlMessage(header);
                 }
             }
             catch (InvalidOperationException ex)
@@ -103,9 +128,9 @@ public class UdpPeer
     }
 
     // Metóda na spracovanie handshake a iných kontrolných správ
-    private async void ProcessControlMessage(Header header)
+    private async Task ProcessControlMessage(Header header)
     {
-        if (!isConnected)
+        if (!handshakeComplete)
         {
             // Spracovanie handshake
             if ((header.Flags & 0x01) != 0 && header.Data == null)
@@ -114,37 +139,65 @@ public class UdpPeer
                 remoteSequenceNumber = header.SequenceNumber;
                 await SendMessageWithHeaderAsync(null, 0x02, localSequenceNumber, remoteSequenceNumber + 1);
             }
-            // Po prijatí SYN-ACK
             else if ((header.Flags & 0x02) != 0 && header.Data == null)
             {
                 Console.WriteLine("Prijaté SYN_ACK, odosielam ACK");
                 remoteSequenceNumber = header.SequenceNumber;
                 await SendMessageWithHeaderAsync(null, 0x04, localSequenceNumber + 1, remoteSequenceNumber + 1);
                 handshakeComplete = true;
-                isConnected = true;  // Ukončenie handshake
+                isConnected = true;
+
+                _ = Task.Run(() => StartHeartbeat());
             }
-            // Po prijatí ACK
             else if ((header.Flags & 0x04) != 0 && header.Data == null)
             {
                 Console.WriteLine("Prijaté ACK, handshake úspešný");
-                isConnected = true;
                 handshakeComplete = true;
+                isConnected = true;
+
+                _ = Task.Run(() => StartHeartbeat());
+            }
+        }
+        else
+        {
+            // Ak handshake už prebehol, ale dostali sme SYN, reštartujeme spojenie
+            if ((header.Flags & 0x01) != 0 && header.Data == null)
+            {
+                Console.WriteLine("Prijaté SYN počas aktívneho spojenia. Reštartujem handshake.");
+                handshakeComplete = false;
+                isConnected = false;
+
+                remoteSequenceNumber = header.SequenceNumber;
+                await SendMessageWithHeaderAsync(null, 0x02, localSequenceNumber, remoteSequenceNumber + 1);
             }
         }
     }
 
+
     // Odosielanie správy s fragmentáciou
     public async Task SendMessageAsync(string message, string? filename = null)
     {
+
+        if (!isConnected)
+        {
+            Console.WriteLine("Spojenie nie je nadviazané. Pokúšam sa o handshake...");
+            await SendHandshakeAsync();
+            // Wait a bit to see if handshake succeeds
+            await Task.Delay(2000);
+            if (!isConnected)
+            {
+                Console.WriteLine("Handshake zlyhal. Správa nebola odoslaná.");
+                return;
+            }
+        }
+
         byte[] messageBytes = Encoding.UTF8.GetBytes(message);
         int totalMessageSize = messageBytes.Length; // Veľkosť správy/súboru v bajtoch
 
         // Výpočet maximálnej veľkosti dát v fragmente
         int headerSize = 1 + 2 * 5; // 11 bajtov
-        int maxDataPerFragment = maxFragmentSize - headerSize;
+        int maxDataPerFragment = maxFragmentSize;
         int totalFragments = (int)Math.Ceiling((double)messageBytes.Length / maxDataPerFragment);
-
-        if (totalFragments == 0) totalFragments = 1;
 
         // Zobrazenie informácií o odosielanej správe/súbore
         if (filename != null)
@@ -155,14 +208,6 @@ public class UdpPeer
         Console.WriteLine($"Veľkosť správy/súboru: {totalMessageSize} bajtov");
         Console.WriteLine($"Počet odosielaných fragmentov: {totalFragments}");
         Console.WriteLine($"Veľkosť fragmentu: {maxFragmentSize} bajtov");
-
-        // Ak má posledný fragment inú veľkosť
-        int lastFragmentDataSize = messageBytes.Length % maxDataPerFragment;
-        if (lastFragmentDataSize != 0)
-        {
-            int lastFragmentSize = lastFragmentDataSize + headerSize;
-            Console.WriteLine($"Posledný fragment má veľkosť: {lastFragmentSize} bajtov");
-        }
 
         for (int i = 0; i < totalFragments; i++)
         {
@@ -186,7 +231,8 @@ public class UdpPeer
             byte[] fragmentBytes = header.ToBytes();
             await sendingClient.SendAsync(fragmentBytes, fragmentBytes.Length, remoteEndPoint);
 
-            Console.WriteLine($"Odoslaný fragment {i + 1}/{totalFragments}, veľkosť dát: {dataLength} bajtov");
+            // Removed unnecessary console output
+            // Console.WriteLine($"Odoslaný fragment {i + 1}/{totalFragments}, veľkosť dát: {dataLength} bajtov");
         }
 
         // Zobrazenie informácií o veľkosti fragmentov
@@ -241,6 +287,91 @@ public class UdpPeer
             }
         }
     }
+
+    private async Task SendAckAsync()
+    {
+        try
+        {
+            Header header = new Header
+            {
+                Flags = 0x08, // ACK flag
+                SequenceNumber = 0,
+                AcknowledgmentNumber = 0,
+                FragmentOffset = 0,
+                TotalFragments = 0,
+                Data = null
+            };
+
+            byte[] ackMessage = header.ToBytes();
+            await sendingClient.SendAsync(ackMessage, ackMessage.Length, remoteEndPoint);
+            // Removed unnecessary console output
+            // Console.WriteLine("Odoslané ACK na heartbeat.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Chyba pri odosielaní ACK správy: {ex.Message}");
+        }
+    }
+
+    private async Task StartHeartbeat()
+    {
+        lastHeartbeatReceived = DateTime.Now;
+
+        while (true)
+        {
+            if (!isConnected) break; // Ukonči heartbeat, ak nie je pripojenie
+
+            try
+            {
+                // Odoslanie heartbeat správy
+                Header heartbeatHeader = new Header
+                {
+                    Flags = 0x07, // Heartbeat flag
+                    SequenceNumber = 0,
+                    AcknowledgmentNumber = 0,
+                    FragmentOffset = 0,
+                    TotalFragments = 0,
+                    Data = null
+                };
+
+                byte[] heartbeatMessage = heartbeatHeader.ToBytes();
+                await sendingClient.SendAsync(heartbeatMessage, heartbeatMessage.Length, remoteEndPoint);
+
+                lastHeartbeatSent = DateTime.Now;
+                await Task.Delay(HEARTBEAT_INTERVAL_MS);
+
+                // Kontrola prijatia odpovede (ACK)
+                if ((DateTime.Now - lastHeartbeatReceived).TotalMilliseconds > HEARTBEAT_INTERVAL_MS * MAX_MISSED_HEARTBEATS)
+                {
+                    missedHeartbeats++;
+                    Console.WriteLine($"Chýba odpoveď na heartbeat. Počet zmeškaných: {missedHeartbeats}");
+
+                    if (missedHeartbeats >= MAX_MISSED_HEARTBEATS)
+                    {
+                        Console.WriteLine("Spojenie zlyhalo. Pokúšam sa znovu nadviazať spojenie...");
+                        isConnected = false;
+                        handshakeComplete = false;
+
+                        // Resetovanie stavu a spustenie handshake
+                        await Task.Run(() => SendHandshakeAsync());
+                        break;
+                    }
+                }
+                else
+                {
+                    missedHeartbeats = 0; // Reset pri úspešnom prijatí odpovede
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Chyba pri odosielaní heartbeat správy: {ex.Message}");
+            }
+        }
+
+        Console.WriteLine("Heartbeat zastavený.");
+    }
+
+
     public void SetMaxFragmentSize(int newSize)
     {
         if (newSize < 20 || newSize > 1400)
@@ -249,7 +380,6 @@ public class UdpPeer
         }
         maxFragmentSize = newSize;
     }
-
 
     public bool IsConnected()
     {
