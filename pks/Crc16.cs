@@ -6,6 +6,8 @@ public static class Crc16
     private const ushort Polynomial = 0x8005;
     private const ushort InitialValue = 0xFFFF;
 
+    private static readonly Random RandomGenerator = new Random(); // Náhodný generátor
+
     // Statický konštruktor na naplnenie CRC tabuľky
     static Crc16()
     {
@@ -29,7 +31,7 @@ public static class Crc16
         }
     }
 
-    // Výpočet CRC16-ANSI pre dané dáta
+    // Výpočet CRC16-ANSI pre dané dáta so šancou na chybu
     public static ushort ComputeChecksum(byte[] bytes)
     {
         ushort crc = InitialValue;
@@ -38,6 +40,14 @@ public static class Crc16
             byte tableIndex = (byte)((crc >> 8) ^ b);
             crc = (ushort)((crc << 8) ^ Table[tableIndex]);
         }
+
+        // Simulácia chyby so šancou 0.01%
+        if (RandomGenerator.NextDouble() < 0.0001) // 0.01% šanca
+        {
+            Console.WriteLine("Simulácia chyby v CRC výpočte!");
+            return (ushort)(crc ^ 0xFFFF); // Náhodná zmena CRC výsledku
+        }
+
         return crc;
     }
 }

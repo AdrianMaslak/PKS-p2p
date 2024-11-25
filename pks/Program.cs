@@ -7,6 +7,8 @@ class Program
 {
     static async Task Main(string[] args)
     {
+        string saveDirectory = Environment.CurrentDirectory; // Predvolený adresár
+
         // Získanie portov a IP adresy od používateľa
         Console.Write("Zadajte svoj receiving port (počúvanie): ");
         int receivePort = int.Parse(Console.ReadLine());
@@ -50,30 +52,35 @@ class Program
         // Vlákno pre počúvanie (každý uzol počúva na svojom porte)
         Task receivingTask = Task.Run(async () =>
         {
-            await localPeer.StartReceivingAsync(message =>
+            try
             {
-                if (message.StartsWith("<FILENAME>"))
+                await localPeer.StartReceivingAsync(message =>
                 {
-                    // Extrahujeme názov súboru a obsah
-                    int endIndex = message.IndexOf("<END>");
-                    string fileName = message.Substring(10, endIndex - 10);
-                    string fileContent = message.Substring(endIndex + 5);
+                    if (message.StartsWith("<FILENAME>"))
+                    {
+                        // Spracovanie prijatého súboru
+                        int endIndex = message.IndexOf("<END>");
+                        string fileName = message.Substring(10, endIndex - 10);
+                        string fileContent = message.Substring(endIndex + 5);
 
-                    // Prevod z Base64
-                    byte[] fileBytes = Convert.FromBase64String(fileContent);
+                        byte[] fileBytes = Convert.FromBase64String(fileContent);
+                        string filePath = Path.Combine(Environment.CurrentDirectory, fileName);
+                        File.WriteAllBytes(filePath, fileBytes);
 
-                    // Uložíme súbor
-                    string filePath = Path.Combine(Environment.CurrentDirectory, fileName);
-                    File.WriteAllBytes(filePath, fileBytes);
-
-                    Console.WriteLine($"Súbor '{fileName}' bol prijatý a uložený na: {filePath}");
-                }
-                else
-                {
-                    Console.WriteLine($"Prijatá správa: {message}");
-                }
-            });
+                        Console.WriteLine($"Súbor '{fileName}' bol prijatý a uložený na: {filePath}");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"Prijatá správa: {message}");
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Receiving task error: {ex.Message}");
+            }
         });
+
 
         // Vlákno pre odosielanie (každý uzol posiela správy na port vzdialeného uzla)
         Task sendingTask = Task.Run(async () =>
@@ -89,6 +96,7 @@ class Program
                 Console.WriteLine("1. Odoslat textovu spravu");
                 Console.WriteLine("2. Odoslat subor");
                 Console.WriteLine("3. Zmenit velkost fragmentu");
+                Console.WriteLine("4. Nastavit cestu na ukladanie prijatych suborov");
                 Console.WriteLine("Napiste 'exit' pre ukoncenie.");
                 Console.Write("Vasa voľba: ");
                 string choice = Console.ReadLine();
@@ -181,6 +189,34 @@ class Program
                         Console.WriteLine("Chyba: Zadana hodnota je prilis velka alebo prilis mala.");
                     }
                 }
+                else if (choice == "4")
+                {
+                    Console.Write("Zadajte absolútnu cestu, kam chcete ukladať prijaté súbory: ");
+                    string newDirectory = Console.ReadLine();
+
+                    if (!string.IsNullOrEmpty(newDirectory))
+                    {
+                        try
+                        {
+                            if (!Directory.Exists(newDirectory))
+                            {
+                                Directory.CreateDirectory(newDirectory);
+                                Console.WriteLine($"Adresár '{newDirectory}' bol vytvorený.");
+                            }
+                            saveDirectory = newDirectory; // Nastavte nový adresár
+                            Console.WriteLine($"Prijaté súbory budú teraz ukladané do: {saveDirectory}");
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Chyba pri nastavovaní adresára: {ex.Message}");
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine("Neplatná cesta. Adresár nebol zmenený.");
+                    }
+                }
+
 
                 else
                 {
